@@ -1,0 +1,51 @@
+{
+    "name": "react-fuffer",
+    "version": "1.5.11",
+    "description": "react-buffer-firestore, a class- or *hook-based, promise-less handler for firebase firestore onSnapshot documents",
+    "main": "src/index.js",
+    "keywords": [
+        "firebase",
+        "firestore",
+        "firebase-firestore",
+        "buffer",
+        "react",
+        "array-buffer",
+        "onSnapshot",
+        "snapshot",
+        "keepalive",
+        "firebase-plugin"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/nickcarducci/react-fuffer"
+    },
+    "files": [
+        "src",
+        "index.js"
+    ],
+    "sideEffects": false,
+    "license": "UNLICENSED",
+    "author": "Nick Carducci nick@carducci.sh",
+    "bugs": {
+        "url": "https://github.com/nickcarducci/react-fuffer"
+    },
+    "peerDependencies": {
+        "firebase": ">=8.7.0",
+        "react": ">=16.8.0"
+    },
+    "devDependencies": {
+        "@babel/core": "7.15.0",
+        "@babel/preset-env": "^7.14.8",
+        "@babel/preset-react": "^7.14.5",
+        "@rollup/plugin-babel": "5.3.0",
+        "@rollup/plugin-commonjs": "20.0.0",
+        "@rollup/plugin-node-resolve": "13.0.4",
+        "core-js": "^3.6.5",
+        "path": "^0.12.7",
+        "regenerator-runtime": "^0.13.7",
+        "rollup": "2.56.2",
+        "rollup-plugin-auto-external": "2.0.0",
+        "rollup-plugin-livereload": "^1.0.0",
+        "rollup-plugin-postcss": "^2.0.3"
+    }
+}

@@ -1,0 +1,36 @@
+{
+    "name": "react-fuffer",
+    "version": "1.5.11",
+    "description": "react-buffer-firestore, a class- or *hook-based, promise-less handler for firebase firestore onSnapshot documents",
+    "main": "src/index.js",
+    "keywords": [
+        "firebase",
+        "firestore",
+        "firebase-firestore",
+        "buffer",
+        "react",
+        "array-buffer",
+        "onSnapshot",
+        "snapshot",
+        "keepalive",
+        "firebase-plugin"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/nickcarducci/react-fuffer"
+    },
+    "files": [
+        "src",
+        "index.js"
+    ],
+    "sideEffects": false,
+    "license": "UNLICENSED",
+    "author": "Nick Carducci nick@carducci.sh",
+    "bugs": {
+        "url": "https://github.com/nickcarducci/react-fuffer"
+    },
+    "peerDependencies": {
+        "firebase": ">=8.7.0",
+        "react": ">=16.8.0"
+    }
+}
