@@ -23,10 +23,8 @@ https://codesandbox.io/s/recursing-paper-4vosh?file=/src/data.js
         oppositeComments: ExpiredcommentsName,
         oppositeCollection: old
       },
-      snapshotQuery: firebase
-        .firestore()
-        .collection(collection)
-        .where("communityId", "==", community.id), //optional canIncludes()?
+      snapshotQuery: [collection(firestore,"collection"),
+        where("communityId", "==", community.id)], //optional canIncludes()?
       keepalive,
       sort: { order: "time", by: "desc" }, //sort
       near: null, //sort && near cannot be true (coexist, orderBy used by geohashing)
@@ -298,10 +296,8 @@ hook
     let p = 0;
     const keepalive = 3600000;
     const free = Jail(
-      firebase
-        .firestore()
-        .collection(collection)
-        .where("communityId", "==", community.id),
+      [collection(firestore,"collection"),
+        where("communityId", "==", community.id)],
       keepalive,
       { order: "time", by: "desc" },
       null,
@@ -317,17 +313,9 @@ hook
       if (!filterTime || foo.datel > new Date()) {
         canIView(this.props.auth, foo, community) && dol.push(foo);
       } else if (this.props.auth !== undefined)
-        firebase
-          .firestore()
-          .collection(foo.collection)
-          .doc(foo.id)
-          .set(foo)
+        setDoc(doc(firestore,foo.collection,foo.id))
           .then(() =>
-            firebase
-              .firestore()
-              .collection(lastCollection)
-              .doc(foo.id)
-              .delete()
+            deleteDoc(doc(firestore,lastCollection,foo.id))
               .then(() =>
                 console.log(
                   `document moved to ${foo.collection} collection ` + foo.id

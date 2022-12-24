@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import firebase from "firebase/app";
 import "firebase/firestore";
+import {
+  doc,
+  getFirestore,
+  limit,
+  limitToLast,
+  onSnapshot,
+  orderBy,
+  query
+} from "firebase/firestore";
 
 const refresh = "";
 
@@ -8,11 +17,11 @@ const postIdToSubdocument = (dropId, keepalive) => {
   //hydratePost (banned on Medium.com vianickcarducci.medium.com, 5/2021)
   if (!dropId.startsWith("")) return null;
   const id = dropId.replace(/^[a-zA-Z]/g, "");
-  const collection = dropId.substring(0, dropId.indexOf(id));
+  const coll = dropId.substring(0, dropId.indexOf(id));
   //return { id, collection };
   const free = Jail(
     //for each: foo = {...doc.data(),doc.id}
-    firebase.firestore().collection(collection).doc(id),
+    doc(firestore, coll, id),
     keepalive,
     null, //sort for firestore orderBy { order: "time", by: "desc" }
     null, //near for geofirestore { center: near.center, radius: near.distance }
@@ -22,10 +31,10 @@ const postIdToSubdocument = (dropId, keepalive) => {
     null //endBefore
   );
   //Jail always returns an array, handle as such (here, single ".doc(")
-  const doc = free.docs[0]; //product
-  if (doc.exists) {
-    var foo = doc.data();
-    foo.collection = collection;
+  const document = free.docs[0]; //product
+  if (document.exists) {
+    var foo = document.data();
+    foo.collection = coll;
     foo.id = id;
     foo.messageAsArray = foo.message ? arrayMessage(foo.message) : [];
     return foo;
@@ -36,7 +45,7 @@ const Jail = (
   keepalive,
   sort,
   near, //sort && near cannot be true (coexist, orderBy used by geohashing)
-  limit,
+  lim,
   startAfter,
   endBefore,
   verbose //REFER TO Readme.md
@@ -55,63 +64,62 @@ const Jail = (
       .map((x) => x.field.segments.join(""))
       .join(","); //String(snapshotQuery);
 
-  //const thisFunc = functionRefs.find(x=>x.id===String(snapshotQuery))
-  // is exported from outside this()/jail/"JailFunction"
-  //The purpose of this func is [non-scalar, linear], idle longpolling, or to
-  //restart keepalive/buffer-if-time-is-more-than-exponentially-related
-  //How to use firebase-firestore's official experiment for this:
-  /*firebase.initializeApp(firebaseConfig);
-    firebase.firestore().settings({ experimentalForceLongPolling: true });*/
-  //const close = onSnapshot() will not depreciate, as an experiment might
-  //Description by me is: long-polling for react, [as abstracted] as "keepalive" is in python,
-  //+/which is(?) how firestore.settings({longPolling}))'s for firebase firestore "onSnapshot"
-  //also & primarily to lessen concurrent snapshot listeners whilst maintaining live data
   const [close, joist] = useState(null); //closeSnapshot, function-in-state
   //to close:()=>{}; in "useState"/updateState, update-state
   //close /*ready*/ &&
   //variables must be defined inside useEffect, if used in it...
   const [docs, updateSet] = useState(null);
-  const query = near
-    ? snapshotQuery.near(near)
-    : sort && sort.order
-    ? snapshotQuery.orderBy(sort.order, sort.by ? sort.by : "desc")
-    : snapshotQuery;
-  const queryWithFixins = startAfter
-    ? query.startAfter(startAfter).limit(limit)
-    : endBefore
-    ? query.endBefore(endBefore).limitToLast(limit)
-    : query.limit(limit);
-  const save =
-    //hoist in-hoist (here, state)// this isn't tested, I would think this would be automated
-    //is saved as function-in-state, runs once
-    //easterEgg: classless-functions aren't running Promises (returns or breaks) like classes; so,
-    //no need to use Promises, & thense: resolve without waiting. ever.
-    //randomEasterEgg: data hydrateUser shows how to snapshot by running twice
-    //to notify && get() for subcollectioning/nesting-an-object on the ui/device
-    queryWithFixins.onSnapshot((qs /*querySnapshot*/) => {
-      //mean: no waiting for update responses to get from,
-      //like it as for subobjects/"subdocuments"/subdocument
-      let p = 0;
-      let dol = [];
-      (!match.includes(".doc(") ? qs.docs : [qs]).forEach(async (doc) => {
-        p++;
-        if (doc.exists) {
-          var foo = fooize(doc, match, keepalive);
-          //subdocuments work as snapshot without promises here! forget data.js hydrateUser
-          foo.drop = await postIdToSubdocument(foo.dropId, keepalive);
-          foo.drops = foo.dropIds.map(
-            async (f) => await postIdToSubdocument(f, keepalive)
-          );
-          foo.messageAsArray = foo.message ? arrayMessage(foo.message) : [];
-          dol.push(foo);
-        }
-      });
-      if (qs.docs.length === p) {
-        startAfter = qs.docs[qs.docs.length - 1];
-        endBefore = qs.docs[0];
-        updateSet(dol);
+  var quer = null;
+  if (near) {
+    quer = startAfter
+      ? snapshotQuery.near(near).startAfter(startAfter).limit(lim)
+      : endBefore
+      ? snapshotQuery.near(near).endBefore(endBefore).limitToLast(lim)
+      : snapshotQuery.near(near).limit(lim);
+  } else {
+    quer = [
+      ...snapshotQuery,
+      orderBy(
+        ...[
+          sort.order ? sort.order : firestore.FieldPath.documentId(),
+          sort.by ? sort.by : "desc"
+        ]
+      ),
+      ...(startAfter
+        ? [startAfter(startAfter), limit(lim)]
+        : endBefore
+        ? [endBefore(endBefore), limitToLast(lim)]
+        : [limit(lim)])
+    ];
+  }
+
+  const snap = (qs /*querySnapshot*/) => {
+    //only promises resolve, and those don't return synchronously
+    //shallow updates? subobjects/"subdocuments"/subdocument
+    let p = 0;
+    let dol = [];
+    (!match.includes(".doc(") ? qs.docs : [qs]).forEach(async (doc) => {
+      p++;
+      if (doc.exists) {
+        var foo = fooize(doc, match, keepalive);
+        //subdocuments work as snapshot without promises here! forget data.js hydrateUser
+        foo.drop = await postIdToSubdocument(foo.dropId, keepalive);
+        foo.drops = foo.dropIds.map(
+          async (f) => await postIdToSubdocument(f, keepalive)
+        );
+        foo.messageAsArray = foo.message ? arrayMessage(foo.message) : [];
+        dol.push(foo);
       }
-    }, standardCatch);
+    });
+    if (qs.docs.length === p) {
+      startAfter = qs.docs[qs.docs.length - 1];
+      endBefore = qs.docs[0];
+      updateSet(dol);
+    }
+  };
+  const save = near
+    ? quer.onSnapshot(snap, standardCatch)
+    : onSnapshot(query(...quer), snap, standardCatch);
   joist(save);
 
   //timeoutRemountFirebaseSnapshot/"keepalive"
@@ -138,27 +146,14 @@ const Jail = (
       endBefore, //7
       verbose //8
     ); //resetCancel(false)
-  } //reset onSnapshot if reset/"reset", with same ref (same String(snapshotQuery)/"match"/JailFunction.id)
-
-  //React: "If your effect returns a function, React will run it
-  //[as it would to] clean up" 86*'when it is time to'
+  }
   useEffect(() => {
-    /**Assignments to the ___ variable from inside React Hook
-     * useEffect will be lost after each render. */
-    //clearInterval(this.ref) runs when called,
-    //restarts keep-alive for "are you still there?" response
     verbose && console.log(docs.length + " results");
     //long-polling for react, [as abstracted] as "keepalive" is in python,
     jail.murder && clearTimeout(jail.murder);
     jail.murder = setTimeout((e) => close(), keepalive); //1hr
     return () => clearTimeout(jail.murder);
   }, [close, docs, keepalive, verbose]); //when call this(), reset/resets count until close()
-
-  //useEffect([foo,bar],effect) should be the firstly-inputted "props" for
-  //useEffect(()=>effect(),[foo,bar])
-  //effect(() => {return () => {/*componentWillUnmount*/;};});
-  //runs when [mounting func-component ["this." or useRef()], [foo,bar]]
-  //"[one interpolation begets all of 'props' object anyway]"
 
   return {
     docs,
@@ -181,9 +176,6 @@ const standardCatch = (err) => console.log("react-fuffer: " + err.message);
 const fooize = (doc, match, keepalive) => {
   var foo = doc.data();
   foo.id = doc.id;
-  //const inx = match.indexOf("collection(");
-  //foo.collection = match.substring(inx, inx + "collection(".length);
-  //foo.collection.substring(0, foo.collection.indexOf(")"));
   foo.collection = match.split("/")[0];
   foo.messageAsArray = foo.message ? arrayMessage(foo.message) : [];
   return foo;
@@ -332,17 +324,7 @@ class WakeSnapshot extends React.Component {
   }
 }
 
-/*const myFunc = forwardRef((props,ref)=>{
-  //only takes (props,ref), like:
-  useEffect(() => {//not really optional
-    clearInterval(ref.current);
-    ref.current = setInterval(props.close, keepalive);
-    return () => clearInterval(ref.current);//unmount cleanup
-  }, [foo,bar]);//when [these change] update, other than onmount mount
-})*/
-
-//snapshotQuery._delegate._query.path.segments
-
+const firestore = getFirestore(firebase);
 export class PostIdToSubdocumentClass extends React.Component {
   componentDidUpdate = async (prevProps) => {
     //if (this.state.drops !== this.state.lastDrops)
@@ -352,16 +334,15 @@ export class PostIdToSubdocumentClass extends React.Component {
         //hydratePost (banned on Medium.com vianickcarducci.medium.com, 5/2021)
         if (!obj.dropId.startsWith("")) return null;
         const id = obj.dropId.replace(/^[a-zA-Z]/g, "");
-        const collection = obj.dropId.substring(0, obj.dropId.indexOf(id));
-        //return { id, collection };
-        firebase
-          .firestore()
-          .collection(collection)
-          .doc(id)
-          .onSnapshot((doc) => {
-            if (doc.exists) {
+        const coll = obj.dropId.substring(0, obj.dropId.indexOf(id));
+
+        onSnapshot(
+          doc(firestore, coll, id),
+          (doc) => {
+            if (doc.exists()) {
+              //snapshotQuery.orderBy is not a function
               var foo = doc.data();
-              foo.collection = collection;
+              foo.collection = coll;
               foo.id = id;
               foo.messageAsArray = foo.message ? arrayMessage(foo.message) : [];
               let rest = [];
@@ -382,7 +363,9 @@ export class PostIdToSubdocumentClass extends React.Component {
               });
               this.props.setJail({ freedocs: [...rest, newFreedoc] });
             }
-          }, standardCatch);
+          },
+          standardCatch
+        );
       });
     if (this.props.droppables !== prevProps.droppables)
       this.props.droppables.forEach((drops) => {
@@ -390,16 +373,14 @@ export class PostIdToSubdocumentClass extends React.Component {
           //hydratePost (banned on Medium.com vianickcarducci.medium.com, 5/2021)
           if (!obj.dropId.startsWith("")) return null;
           const id = obj.dropId.replace(/^[a-zA-Z]/g, "");
-          const collection = obj.dropId.substring(0, obj.dropId.indexOf(id));
-          //return { id, collection };
-          firebase
-            .firestore()
-            .collection(collection)
-            .doc(id)
-            .onSnapshot((doc) => {
-              if (doc.exists) {
+          const coll = obj.dropId.substring(0, obj.dropId.indexOf(id));
+
+          onSnapshot(
+            doc(firestore, coll, id),
+            (doc) => {
+              if (doc.exists()) {
                 var foo = doc.data();
-                foo.collection = collection;
+                foo.collection = coll;
                 foo.id = id;
                 foo.messageAsArray = foo.message
                   ? arrayMessage(foo.message)
@@ -427,7 +408,9 @@ export class PostIdToSubdocumentClass extends React.Component {
                 });
                 this.props.setJail({ freedocs: [...rest, newFreedoc] });
               }
-            }, standardCatch);
+            },
+            standardCatch
+          );
         });
       });
   };
@@ -445,31 +428,36 @@ class JailClass extends React.Component {
     this.closeTimer = {};
     this.aliveTimer = {};
   }
-  matchy = (snapshotQuery) => {
-    const dele = snapshotQuery._delegate ? snapshotQuery : snapshotQuery._query;
-
+  matchy = (snapshotQuery, near) => {
+    //const dele = snapshotQuery._delegate ? snapshotQuery : snapshotQuery._query;
+    //console.log(snapshotQuery); //_delegate
+    //console.log(snapshotQuery[0]);
+    const sn = near ? snapshotQuery._query : snapshotQuery[0]._query;
     return (
-      dele._delegate._query.path.segments.join(",") +
+      sn.path.segments.join(",") +
       "/" +
-      dele._delegate._query.filters
-        .map((x) => x.field.segments.join(""))
-        .join(",")
+      sn.filters.map((x) => x.field.segments.join("")).join(",") +
+      (near
+        ? ""
+        : snapshotQuery
+            .map((x, i) =>
+              snapshotQuery[i].type === "where" ? snapshotQuery[i].ga : null
+            )
+            .filter((x) => x)
+            .join("/"))
     );
   };
   componentWillUnmount = () => {
     this.props.updatedclasses.forEach((x) => {
-      this.closeTimer[this.matchy(x.snapshotQuery)] &&
-        clearTimeout(this.closeTimer[this.matchy(x.snapshotQuery)]);
-      this.aliveTimer[this.matchy(x.snapshotQuery)] &&
-        clearInterval(this.aliveTimer[this.matchy(x.snapshotQuery)]);
+      this.closeTimer[this.matchy(x.snapshotQuery, x.near)] &&
+        clearTimeout(this.closeTimer[this.matchy(x.snapshotQuery, x.near)]);
+      this.aliveTimer[this.matchy(x.snapshotQuery, x.near)] &&
+        clearInterval(this.aliveTimer[this.matchy(x.snapshotQuery, x.near)]);
     });
   };
   componentDidUpdate = (prevProps) => {
     if (this.props.jailclasses !== prevProps.jailclasses) {
-      //Make sure query object for class injection is ONLY new ones.
-      //Though the rest of react-fuffer ops like unmount & remount
-      //strictly doesn't run a jailclasses[n] without intent, the
-      //component updates when any part of the whole array changes
+      //triggers whenever any friend component in the whole array changes
 
       this.updateUpdateables(
         this.props.jailclasses.filter(
@@ -477,6 +465,172 @@ class JailClass extends React.Component {
         )
       );
     }
+  }; //I actualy don't think sunk costs ARE a fallacy. opportunity costs are
+  //institutional and banks are in alignment
+  //invest in yourself vau.money squrrel corn white
+  //guns all bluff or nothing
+  //peace comes from geohash docket money
+  snapshothandler = (
+    qs,
+    eight,
+    match,
+    keepalive,
+    x,
+    verbose,
+    uuid,
+    alivefor,
+    whenOn
+  ) => {
+    let p = 0;
+    let docs = [];
+    var qsdocs = !match.includes(".doc(") ? qs.docs : [qs];
+    console.log(qsdocs);
+    qsdocs.forEach((doc) => {
+      p++;
+      if (eight ? doc.exists : doc.exists()) {
+        //snapshotQuery.orderBy is not a function
+        var foo = fooize(doc, match, keepalive);
+        if (foo.dropId)
+          this.setState({
+            droppable: [
+              ...this.state.droppable.filter(
+                (x) => x.collection + x.id !== foo.collection + x.id
+              ),
+              foo
+            ]
+          });
+        if (foo.dropIds)
+          this.setState({
+            droppables: [
+              ...this.state.droppables.filter(
+                (x) => x.collection + x.id !== foo.collection + x.id
+              ),
+              foo
+            ]
+          });
+        //foo.dropIds.map((f) => postIdToSubdocumentClass(f))
+        //: [];
+        docs.push(foo);
+      }
+    });
+    //this.closeTimeouts[match].bind(this);
+    if (qsdocs.length === p) {
+      //functional-matching match func "fuffer"
+      this.props.setJail({
+        updatedclasses: [...this.props.updatedclasses, x]
+      });
+      verbose && console.log("fuffer:" + uuid, x.state, docs);
+      this.props.updateLiberty({
+        uuid,
+        state: x.state,
+        docsOutputLabel: x.docsOutputLabel,
+        alivefor,
+        docs,
+        startAfter: qsdocs[qsdocs.length - 1],
+        endBefore: qsdocs[0],
+        id: match,
+        verbose,
+        whenOn
+      });
+    }
+  };
+  run = (
+    sort,
+    near,
+    lim,
+    startAfter,
+    endBefore,
+    match,
+    close,
+    alivefor,
+    keepalive,
+    snapshotQuery,
+    whenOn,
+    verbose,
+    uuid,
+    x
+  ) => {
+    this.closeTimer[match] && clearTimeout(this.closeTimer[match]);
+    this.closeTimer[match] = setTimeout(() => close(), alivefor);
+    this.aliveTimer[match] && clearInterval(this.aliveTimer[match]);
+    this.aliveTimer[match] = setInterval(() => {
+      const thisAFor = this.props.alivefors.find((x) => x[match]);
+      this.props.setJail({
+        alivefors: [
+          {
+            [match]: !thisAFor ? alivefor - 1000 : thisAFor[match] - 1000
+          },
+          ...this.props.alivefors.filter((x) => !x[match])
+        ]
+      });
+    }, 1000);
+    this.closeTimeouts[match] = near
+      ? (startAfter
+          ? snapshotQuery.near(near).startAfter(startAfter).limit(lim)
+          : endBefore
+          ? snapshotQuery.near(near).endBefore(endBefore).limitToLast(lim)
+          : snapshotQuery.near(near).limit(lim)
+        ).onSnapshot((e) => {
+          //console.log(e.docs);
+          this.snapshothandler(
+            e,
+            near, //  eight,
+            match,
+            keepalive,
+            x,
+            verbose,
+            uuid,
+            alivefor,
+            whenOn
+          );
+        }, standardCatch)
+      : onSnapshot(
+          query(
+            ...snapshotQuery,
+            orderBy(
+              ...[
+                sort.order ? sort.order : firestore.FieldPath.documentId(),
+                sort.by ? sort.by : "desc"
+              ]
+            ),
+            ...(startAfter
+              ? [startAfter(startAfter), limit(lim)]
+              : endBefore
+              ? [endBefore(endBefore), limitToLast(lim)]
+              : [limit(lim)])
+          ),
+          (e) => {
+            //https://stackoverflow.com/questions/47057506/using-limit-with-firestore-queries
+            return this.snapshothandler(
+              e,
+              near, //  eight,
+              match,
+              keepalive,
+              x,
+              verbose,
+              uuid,
+              alivefor,
+              whenOn
+            );
+          },
+          (e) => console.log(e.message)
+        );
+    //console.log(snaps);
+
+    const thisClose = this.props.closes.find((x) => x[match]);
+    this.props.setJail({
+      closes: [
+        { [match]: !thisClose ? close : thisClose[match] },
+        ...this.props.closes.filter((x) => !x[match])
+      ]
+    });
+    const thisresnap = this.props.resnaps.find((x) => x[match]);
+    this.props.setJail({
+      resnaps: [
+        { [match]: !thisresnap ? x : thisresnap[match] },
+        ...this.props.resnaps.filter((x) => !x[match])
+      ]
+    });
   };
   updateUpdateables = (updateables) =>
     this.setState(
@@ -491,7 +645,7 @@ class JailClass extends React.Component {
             keepalive,
             sort,
             near, //sort && near cannot be true (coexist, orderBy used by geohashing)
-            limit,
+            lim,
             startAfter,
             endBefore,
             verbose, //REFER TO Readme.md
@@ -502,7 +656,8 @@ class JailClass extends React.Component {
           });
           verbose && console.log(x.uuid);
 
-          const match = this.matchy(snapshotQuery);
+          const match = this.matchy(snapshotQuery, near);
+          console.log(match);
           var alivefor = keepalive ? keepalive : 3600000;
           const close = () => {
             if (this.aliveTimer[match]) {
@@ -512,9 +667,9 @@ class JailClass extends React.Component {
                 );
               clearInterval(this.aliveTimer[match]);
             } /*else
-        console.log(
-          "dev: this.aliveTimer[match] not found in class component"
-        );*/
+              console.log(
+                "dev: this.aliveTimer[match] not found in class component"
+              );*/
             this.props.setJail({
               updatedclasses: this.props.updatedclasses.filter(
                 (u) => u.uuid !== uuid
@@ -536,109 +691,32 @@ class JailClass extends React.Component {
             pause = 3400;
           }
 
-          const run = () => {
-            this.closeTimer[match] && clearTimeout(this.closeTimer[match]);
-            this.closeTimer[match] = setTimeout(() => close(), alivefor);
-            this.aliveTimer[match] && clearInterval(this.aliveTimer[match]);
-            this.aliveTimer[match] = setInterval(() => {
-              const thisAFor = this.props.alivefors.find((x) => x[match]);
-              this.props.setJail({
-                alivefors: [
-                  {
-                    [match]: !thisAFor
-                      ? alivefor - 1000
-                      : thisAFor[match] - 1000
-                  },
-                  ...this.props.alivefors.filter((x) => !x[match])
-                ]
-              });
-            }, 1000);
-
-            const firebase = near
-              ? snapshotQuery.near(near)
-              : sort && sort.order
-              ? snapshotQuery.orderBy(sort.order, sort.by ? sort.by : "desc")
-              : snapshotQuery;
-            const firestore = startAfter
-              ? firebase.startAfter(startAfter).limit(limit)
-              : endBefore
-              ? firebase.endBefore(endBefore).limitToLast(limit)
-              : firebase.limit(limit);
-
-            //firebase.firestore().onSnapshot(...)
-            this.closeTimeouts[match] = firestore.onSnapshot((qs) => {
-              let p = 0;
-              let docs = [];
-              var qsdocs = !match.includes(".doc(") ? qs.docs : [qs];
-              qsdocs.forEach((doc) => {
-                p++;
-                if (doc.exists) {
-                  var foo = fooize(doc, match, keepalive);
-                  if (foo.dropId)
-                    this.setState({
-                      droppable: [
-                        ...this.state.droppable.filter(
-                          (x) => x.collection + x.id !== foo.collection + x.id
-                        ),
-                        foo
-                      ]
-                    });
-                  if (foo.dropIds)
-                    this.setState({
-                      droppables: [
-                        ...this.state.droppables.filter(
-                          (x) => x.collection + x.id !== foo.collection + x.id
-                        ),
-                        foo
-                      ]
-                    });
-                  //foo.dropIds.map((f) => postIdToSubdocumentClass(f))
-                  //: [];
-                  docs.push(foo);
-                }
-              });
-              //this.closeTimeouts[match].bind(this);
-              if (qsdocs.length === p) {
-                //functional-matching match func "fuffer"
-                this.props.setJail({
-                  updatedclasses: [...this.props.updatedclasses, x]
-                });
-                verbose && console.log("fuffer:" + uuid, x.state, docs);
-                this.props.updateLiberty({
-                  uuid,
-                  state: x.state,
-                  docsOutputLabel: x.docsOutputLabel,
-                  alivefor,
-                  docs,
-                  startAfter: qsdocs[qsdocs.length - 1],
-                  endBefore: qsdocs[0],
-                  id: match,
-                  verbose,
-                  whenOn
-                });
-              }
-            }, standardCatch);
-            const thisClose = this.props.closes.find((x) => x[match]);
-            this.props.setJail({
-              closes: [
-                { [match]: !thisClose ? close : thisClose[match] },
-                ...this.props.closes.filter((x) => !x[match])
-              ]
-            });
-            const thisresnap = this.props.resnaps.find((x) => x[match]);
-            this.props.setJail({
-              resnaps: [
-                { [match]: !thisresnap ? x : thisresnap[match] },
-                ...this.props.resnaps.filter((x) => !x[match])
-              ]
-            });
-          };
-          setTimeout(() => run(), pause);
+          setTimeout(
+            () =>
+              this.run(
+                sort,
+                near,
+                lim,
+                startAfter,
+                endBefore,
+                match,
+                close,
+                alivefor,
+                keepalive,
+                snapshotQuery,
+                whenOn,
+                verbose,
+                uuid,
+                x
+              ),
+            pause
+          );
           if (!x.done) {
             x.done = true;
           }
         })
     );
+
   render() {
     return (
       <div id="fuffer" ref={this.props.fuffer}>
@@ -652,193 +730,4 @@ class JailClass extends React.Component {
     );
   }
 }
-//const fic = Object.values(functionRefs);
-//const functionCount = fic.length > 0;
-export {
-  //functionRefs,
-  //functions,
-  //functionCount,
-  Jail,
-  firebase,
-  WakeSnapshot,
-  JailClass
-};
-//export default JailClass;
-/*React.forwardRef((props, ref) => (
-  <JailClass fuffer={ref} {...props} />
-));*/
-
-/*if (this.state.reset) {
-  this.setState({reset:false},()=>{
-  JailClass(
-    snapshotQuery,
-    keepalive,
-    sort,
-    near, //sort && near => cannot be true (coexist, orderBy used by geohashing)
-    limit,
-    startAfter,
-    endBefore,
-    verbose,
-    whenOn
-  ); //resetCancel(false)
-  })
-}*/
-/*const {
-  //connection,
-  queryWithFixins,
-  match,
-  keepalive,
-  verbose,
-  whenOn
-} = this.props;*/
-//const { jailclasses } = this.props;
-
-//  //long-polling for react, [as abstracted] as "keepalive" is in python,
-//
-//refresh / reset resores keepalive = 1hr with this in new Set of funcs
-//still allows firestore to disconnect as it does its abstracted long polling
-//verbose && console.log(fmFUFFER);
-
-//RTCDataChannel also requires JSON objects to be strings
-//return product;
-
-/*await new Promise((resolve) => {
-  clearInterval(current.poll);
-  current.poll = setInterval(() => {
-    product.sendableDocs &&
-      resolve(
-        JSON.stringify({
-          startAfter: product.startAfter,
-          endBefore: product.endBefore,
-          docs: product.sendableDocs,
-          refresh: () => (reset = true),
-          id: match,
-          alivefor,
-          verbose,
-          whenOn,
-          close: product.close
-        })
-      );
-  }, 6732);
-});*/
-
-//const snapFuncs = snapFuncs;
-//let first = false;
-//arrow functions are like tiny react apps!, they bind this, et. al
-//var currentExists = Object.values(snapFuncs).find((f) => f.id === match);
-
-//clearIntervall() && setInterval() would have been useful here
-//to pass the object through a {dataChannel:RTCDataChannel,close:()=>close()}
-//WRONG: but window => dom access is fine, or this page... var(s) at top of page outside
-//default makeshitSnapshot = null
-//REASON: the value is lost, must use RTCDataChannel
-//var current = { id: match };
-/*var current = Object.values(functionRefs).find((f) => f.id === match);
-if (!current) {
-//so this probably always !current
-current = { id: match };
-functionRefs.add(current);
-}*/
-//snapshotQuery._delegate._query.path.segments
-
-/*if (first) {
-        localizedDocs = docs; //renders on mount
-        first = true;
-      } else {
-        const w2319 = docs.find((x) => {
-          const newDoc = dbFUFFER[match].find((y) => y.id === x.id);
-          return newDoc !== x;
-        });
-        if (w2319) localizedDocs.push(w2319);
-      }*/
-
-/**
-       *
-      clearInterval(dataParent.cancel);
-      dataParent.cancel = setInterval(() => {
-        var rumble;
-        clearInterval(rumble);
-        rumble = setInterval(() => {
-          if (localizedDocs && localizedDocs.length === 0) {
-            return whenOn && console.log(match + " running, nothing new..");
-          } else {
-            verbose &&
-              console.log(
-                `upFUFFER upFUFFER hold on we got something (localizedDocs ${match})`
-              );
-            localizedDocs.map((one) => {
-              const rest = sendableDocs.filter((x) => x.id !== one.id);
-              verbose && console.log([...rest, one]);
-              verbose && console.log("_loading into sendableDocs (docs Array)");
-              sendableDocs = [...rest, one]; //window.fuffer.dbFUFFER[match]
-              verbose && console.log(sendableDocs);
-              //.send thru RTCDataChannel
-              return (localizedDocs = localizedDocs.filter(
-                (x) => x.id !== one.id
-              ));
-            });
-          }
-        }, 3000);
-      }, 10000);
-       */
-/*var receivers = connection.getReceivers();
-      console.log(
-        receivers.length + " DataChannel-receivers on this RTCPeerConnection"
-      );
-      const peerId = 65534 - receivers.length;
-      const opts = { negotiated: true, id: peerId };
-      var datachannel = connection.createDataChannel(
-        `label for channel ${match}`,
-        opts
-      );*/
-
-/*var pc = new RTCPeerConnection();
-    const opts = { negotiated: true, id: product.peerId };
-    //peer connection can have up to a theoretical maximum of 65,534 data channels
-    var dc = pc.createDataChannel(
-      `label for channel ${product.id} if ${product.peerId}`,
-      opts
-    );
-    dc.onopen = () => {
-      console.log("datachannel open");
-    };
-    product.dc.onmessage = (event) =>
-      console.log("received: " + event.data);
-
-    product.dc.onclose = () => console.log("datachannel close");
-  */
-
-//pass thru forwardRef object of onSnapshot response for Class
-/*var functionRefs = new Set();
-const fic = Object.values(functionRefs);
-const functionCount = fic.length > 0;*/
-//window.fuffer = { fmFUFFER: [] };
-
-//snapFuncs = new Set();
-
-/*constructor(props) {
-  super(props);
-  this.state = {};
-  this.fuffer = this.props.fuffer;ref from parent
-  fuffer.snapFuncs = new Set();
-}*/
-/*if (!window.fuffer.fmFUFFER.includes(match)) {
-console.log(docs);
-console.log(match);
-window.fuffer.fmFUFFER.push(match);
-}*/
-/*{
-  state: x.state,
-  docsOutputLabel: x.docsOutputLabel,
-  alivefor,
-  docs,
-  startAfter: qs.docs[qs.docs.length - 1],
-  endBefore: qs.docs[0],
-  id: match,
-  verbose,
-  whenOn
-}*/
-/**
- * product = {state:{}, ...product}
- */
-//[product.docsOutputLabel]: product.docs,
+export { Jail, firebase, WakeSnapshot, JailClass };
