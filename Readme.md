@@ -45,6 +45,7 @@ https://codesandbox.io/s/recursing-paper-4vosh?file=/src/data.js
 
 ...
 
+    const firestore = getFirestore(firebaseappinitialized); //new
     class Data extends React.Component {
       constructor(props) {
         super(props);
@@ -68,6 +69,7 @@ https://codesandbox.io/s/recursing-paper-4vosh?file=/src/data.js
         return (
           <div>    
             <JailClass
+             firestore={firestore}
               fuffer={this.fuffer}
               jailclasses={jailclasses}
               updateLiberty={(productFuffer) =>
@@ -295,6 +297,7 @@ hook
     let dol = [];
     let p = 0;
     const keepalive = 3600000;
+    const firestore = getFirestore(firebaseappinitialized); //new
     const free = Jail(
       [collection(firestore,"collection"),
         where("communityId", "==", community.id)],
@@ -304,7 +307,8 @@ hook
       14,
       null,
       null, 
-      true 
+      true,
+      firestore
     ); 
     free.docs.forEach(async (foo) => {
       p++;

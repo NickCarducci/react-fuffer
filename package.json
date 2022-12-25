@@ -1,6 +1,6 @@
 {
     "name": "react-fuffer",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "description": "react-buffer-firestore, a class- or *hook-based, promise-less handler for firebase firestore onSnapshot documents",
     "main": "src/index.js",
     "keywords": [

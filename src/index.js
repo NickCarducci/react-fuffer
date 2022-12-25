@@ -1,6 +1,4 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import firebase from "firebase/app";
-import "firebase/firestore";
 import {
   doc,
   getFirestore,
@@ -13,7 +11,7 @@ import {
 
 const refresh = "";
 
-const postIdToSubdocument = (dropId, keepalive) => {
+const postIdToSubdocument = (dropId, keepalive, firestore) => {
   //hydratePost (banned on Medium.com vianickcarducci.medium.com, 5/2021)
   if (!dropId.startsWith("")) return null;
   const id = dropId.replace(/^[a-zA-Z]/g, "");
@@ -48,7 +46,8 @@ const Jail = (
   lim,
   startAfter,
   endBefore,
-  verbose //REFER TO Readme.md
+  verbose, //REFER TO Readme.md
+  firestore
 ) => {
   keepalive = keepalive ? keepalive : 3600000;
   //no need for async await here in database-jail. React.funcs seem to abstract
@@ -103,9 +102,9 @@ const Jail = (
       if (doc.exists) {
         var foo = fooize(doc, match, keepalive);
         //subdocuments work as snapshot without promises here! forget data.js hydrateUser
-        foo.drop = await postIdToSubdocument(foo.dropId, keepalive);
+        foo.drop = await postIdToSubdocument(foo.dropId, keepalive, firestore);
         foo.drops = foo.dropIds.map(
-          async (f) => await postIdToSubdocument(f, keepalive)
+          async (f) => await postIdToSubdocument(f, keepalive, firestore)
         );
         foo.messageAsArray = foo.message ? arrayMessage(foo.message) : [];
         dol.push(foo);
@@ -324,7 +323,6 @@ class WakeSnapshot extends React.Component {
   }
 }
 
-const firestore = getFirestore(firebase);
 export class PostIdToSubdocumentClass extends React.Component {
   componentDidUpdate = async (prevProps) => {
     //if (this.state.drops !== this.state.lastDrops)
@@ -337,7 +335,7 @@ export class PostIdToSubdocumentClass extends React.Component {
         const coll = obj.dropId.substring(0, obj.dropId.indexOf(id));
 
         onSnapshot(
-          doc(firestore, coll, id),
+          doc(this.props.firestore, coll, id),
           (doc) => {
             if (doc.exists()) {
               //snapshotQuery.orderBy is not a function
@@ -376,7 +374,7 @@ export class PostIdToSubdocumentClass extends React.Component {
           const coll = obj.dropId.substring(0, obj.dropId.indexOf(id));
 
           onSnapshot(
-            doc(firestore, coll, id),
+            doc(this.props.firestore, coll, id),
             (doc) => {
               if (doc.exists()) {
                 var foo = doc.data();
@@ -441,7 +439,11 @@ class JailClass extends React.Component {
         ? ""
         : snapshotQuery
             .map((x, i) =>
-              snapshotQuery[i].type === "where" ? snapshotQuery[i].ga : null
+              snapshotQuery[i].type === "where"
+                ? snapshotQuery[i].wa.segments.join("") +
+                  snapshotQuery[i].ma +
+                  snapshotQuery[i].ga
+                : null
             )
             .filter((x) => x)
             .join("/"))
@@ -459,11 +461,16 @@ class JailClass extends React.Component {
     if (this.props.jailclasses !== prevProps.jailclasses) {
       //triggers whenever any friend component in the whole array changes
 
+      //console.log(this.props.jailclasses);
+      //clearTimeout(this.waitForMore);
+      //this.waitForMore = setTimeout(() => {
+      console.log(this.props.jailclasses);
       this.updateUpdateables(
         this.props.jailclasses.filter(
           (x) => !this.state.updateables.find((u) => u.uuid === x.uuid)
         )
       );
+      //}, 500);
     }
   }; //I actualy don't think sunk costs ARE a fallacy. opportunity costs are
   //institutional and banks are in alignment
@@ -484,7 +491,7 @@ class JailClass extends React.Component {
     let p = 0;
     let docs = [];
     var qsdocs = !match.includes(".doc(") ? qs.docs : [qs];
-    console.log(qsdocs);
+    //console.log(qsdocs);
     qsdocs.forEach((doc) => {
       p++;
       if (eight ? doc.exists : doc.exists()) {
@@ -541,7 +548,6 @@ class JailClass extends React.Component {
     startAfter,
     endBefore,
     match,
-    close,
     alivefor,
     keepalive,
     snapshotQuery,
@@ -550,8 +556,6 @@ class JailClass extends React.Component {
     uuid,
     x
   ) => {
-    this.closeTimer[match] && clearTimeout(this.closeTimer[match]);
-    this.closeTimer[match] = setTimeout(() => close(), alivefor);
     this.aliveTimer[match] && clearInterval(this.aliveTimer[match]);
     this.aliveTimer[match] = setInterval(() => {
       const thisAFor = this.props.alivefors.find((x) => x[match]);
@@ -589,7 +593,9 @@ class JailClass extends React.Component {
             ...snapshotQuery,
             orderBy(
               ...[
-                sort.order ? sort.order : firestore.FieldPath.documentId(),
+                sort && sort.order
+                  ? sort.order
+                  : this.props.firestore.FieldPath.documentId(),
                 sort.by ? sort.by : "desc"
               ]
             ),
@@ -617,13 +623,6 @@ class JailClass extends React.Component {
         );
     //console.log(snaps);
 
-    const thisClose = this.props.closes.find((x) => x[match]);
-    this.props.setJail({
-      closes: [
-        { [match]: !thisClose ? close : thisClose[match] },
-        ...this.props.closes.filter((x) => !x[match])
-      ]
-    });
     const thisresnap = this.props.resnaps.find((x) => x[match]);
     this.props.setJail({
       resnaps: [
@@ -645,19 +644,20 @@ class JailClass extends React.Component {
             keepalive,
             sort,
             near, //sort && near cannot be true (coexist, orderBy used by geohashing)
-            lim,
+            limit,
             startAfter,
             endBefore,
             verbose, //REFER TO Readme.md
             whenOn
           } = x;
-          this.setState({
+          //console.log(x);
+          /*this.setState({
             updateables: this.state.updateables.filter((x) => x.uuid !== uuid)
-          });
+          });*/
           verbose && console.log(x.uuid);
 
           const match = this.matchy(snapshotQuery, near);
-          console.log(match);
+          //console.log(match);
           var alivefor = keepalive ? keepalive : 3600000;
           const close = () => {
             if (this.aliveTimer[match]) {
@@ -691,26 +691,32 @@ class JailClass extends React.Component {
             pause = 3400;
           }
 
-          setTimeout(
-            () =>
-              this.run(
-                sort,
-                near,
-                lim,
-                startAfter,
-                endBefore,
-                match,
-                close,
-                alivefor,
-                keepalive,
-                snapshotQuery,
-                whenOn,
-                verbose,
-                uuid,
-                x
-              ),
-            pause
-          );
+          setTimeout(() => {
+            this.run(
+              sort,
+              near,
+              limit, //lim
+              startAfter,
+              endBefore,
+              match,
+              alivefor,
+              keepalive,
+              snapshotQuery,
+              whenOn,
+              verbose,
+              uuid,
+              x
+            );
+            this.closeTimer[match] && clearTimeout(this.closeTimer[match]);
+            this.closeTimer[match] = setTimeout(() => close(), alivefor);
+            const thisClose = this.props.closes.find((x) => x[match]);
+            this.props.setJail({
+              closes: [
+                { [match]: !thisClose ? close : thisClose[match] },
+                ...this.props.closes.filter((x) => !x[match])
+              ]
+            });
+          }, pause);
           if (!x.done) {
             x.done = true;
           }
@@ -730,4 +736,4 @@ class JailClass extends React.Component {
     );
   }
 }
-export { Jail, firebase, WakeSnapshot, JailClass };
+export { Jail, WakeSnapshot, JailClass };
