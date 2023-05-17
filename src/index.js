@@ -1,15 +1,17 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   doc,
-  getFirestore,
+  endBefore,
+  //getFirestore,
   limit,
   limitToLast,
   onSnapshot,
   orderBy,
-  query
+  query,
+  startAfter
 } from "firebase/firestore";
 
-const refresh = "";
+//const refresh = "";
 
 const postIdToSubdocument = (dropId, keepalive, firestore) => {
   //hydratePost (banned on Medium.com vianickcarducci.medium.com, 5/2021)
@@ -38,12 +40,26 @@ const postIdToSubdocument = (dropId, keepalive, firestore) => {
     return foo;
   }
 };
+//prevent reconciliation loss?
+//has the meidas brothers thought to super pac eachother?
+//no one match me can you be unique with a super pac
+
+//How can you remain unique with a Super PAC buddy?
+//50% deficit isn't an accident
+
+//we talking entrapment?
+//all unemployment is marginal (on a platter)
+//$30k in back rub appointments (duct/reward)
 
 export const matchy = (snapshotQuery, near) => {
   //const dele = snapshotQuery._delegate ? snapshotQuery : snapshotQuery._query;
   //console.log(snapshotQuery); //_delegate
-  const sn = near ? snapshotQuery._query : snapshotQuery[0]._query;
-  return !sn.path
+  if (!snapshotQuery) return "";
+  const sn = near
+    ? snapshotQuery._query
+    : snapshotQuery[0] && snapshotQuery[0]._query;
+  //console.log(sn.path);
+  return !sn || !sn.path
     ? ""
     : sn.path.segments.join(",") +
         "/" +
@@ -521,8 +537,10 @@ class JailClass extends React.Component {
           },
           () => {*/
         if (updates.length > 0) {
+          console.log("REACT-FUFFER:", updates);
           this.handleUpdate(updates);
         } else {
+          console.log("REACT-FUFFER:", `Nothing new`);
           this.props.updateLiberty(
             null,
             remounts.map((x) => matchy(x.snapshotQuery))
@@ -590,6 +608,8 @@ class JailClass extends React.Component {
       verbose && console.log("fuffer:" + uuid, x.state, docs);
       this.props.updateLiberty({
         uuid,
+        stateAfterLabel: x.stateAfterLabel,
+        endBeforeLabel: x.endBeforeLabel,
         state: x.state,
         docsOutputLabel: x.docsOutputLabel,
         alivefor,
@@ -606,8 +626,8 @@ class JailClass extends React.Component {
     sort,
     near,
     lim,
-    startAfter,
-    endBefore,
+    sA,
+    eB,
     match,
     alivefor,
     keepalive,
@@ -630,10 +650,10 @@ class JailClass extends React.Component {
       });
     }, 1000);
     this.closeTimeouts[match] = near
-      ? (startAfter
-          ? snapshotQuery.near(near).startAfter(startAfter).limit(lim)
-          : endBefore
-          ? snapshotQuery.near(near).endBefore(endBefore).limitToLast(lim)
+      ? (sA
+          ? snapshotQuery.near(near).startAfter(sA).limit(lim)
+          : eB
+          ? snapshotQuery.near(near).endBefore(eB).limitToLast(lim)
           : snapshotQuery.near(near).limit(lim)
         ).onSnapshot((e) => {
           //console.log(e.docs);
@@ -660,10 +680,10 @@ class JailClass extends React.Component {
                 sort.by ? sort.by : "desc"
               ]
             ),
-            ...(startAfter
-              ? [startAfter(startAfter), limit(lim)]
-              : endBefore
-              ? [endBefore(endBefore), limitToLast(lim)]
+            ...(sA
+              ? [startAfter(sA), limit(lim)]
+              : eB
+              ? [endBefore(eB), limitToLast(lim)]
               : [limit(lim)])
           ),
           (e) => {
